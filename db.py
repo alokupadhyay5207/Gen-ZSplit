@@ -1,72 +1,69 @@
-"""Database plumbing shared by the legacy routes and the groupsplit package.
-
-Why this module exists
-----------------------
-SQLite ships with foreign-key enforcement **off** on every new connection.
-The previous code never turned it on, so every ``ON DELETE CASCADE`` in the
-schema was decorative and deleting a group left orphaned members, expenses and
-activity behind.  Everything now goes through :func:`connect`, which enables
-it, and the path is absolute so the app can never silently create a second,
-empty database just because it was launched from another directory.
-"""
+"""MongoDB Atlas connection and shared collection helpers for Gen-ZSplit."""
 from __future__ import annotations
 
 import os
-import sqlite3
-from contextlib import contextmanager
+from functools import lru_cache
 
-from flask import current_app, g
+from pymongo import ASCENDING, MongoClient
+from pymongo.errors import DuplicateKeyError
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DB_PATH = os.environ.get("DATABASE_PATH") or os.path.join(BASE_DIR, "expense_tracker.db")
+# Retained only for backwards-compatible imports; no SQLite file is used.
+DEFAULT_DB_PATH = os.path.join(BASE_DIR, "mongodb-atlas")
+
+_client = None
+_database = None
+_indexes_ready = False
 
 
-def connect(path: str | None = None, *, manual_transactions: bool = False) -> sqlite3.Connection:
-    """Open a connection with the pragmas this app depends on.
+def get_db():
+    """Return the MongoDB database, connecting lazily for serverless cold starts."""
+    global _client, _database, _indexes_ready
+    uri = os.environ.get("MONGODB_URI", "").strip()
+    if not uri:
+        raise RuntimeError("MONGODB_URI is missing. Configure it in Vercel Environment Variables.")
+    if _client is None:
+        _client = MongoClient(
+            uri,
+            serverSelectionTimeoutMS=8000,
+            connectTimeoutMS=8000,
+            appname="Gen-ZSplit",
+        )
+        db_name = os.environ.get("MONGODB_DB_NAME", "").strip()
+        if not db_name:
+            # Use a database name from the URI path when supplied, else a stable default.
+            from urllib.parse import urlparse
+            db_name = urlparse(uri).path.strip("/").split("/")[0] or "genzsplit"
+        _database = _client[db_name]
+    if not _indexes_ready:
+        _database.users.create_index([("email", ASCENDING)], unique=True)
+        _database.expenses.create_index([("user_id", ASCENDING), ("date", ASCENDING)])
+        _database.budgets.create_index([("user_id", ASCENDING), ("month", ASCENDING)], unique=True)
+        _database.groups.create_index([("invite_code", ASCENDING)], unique=True)
+        _database.group_members.create_index([("group_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
+        _database.group_expenses.create_index([("group_id", ASCENDING), ("expense_date", ASCENDING)])
+        _database.expense_splits.create_index([("expense_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
+        _database.settlements.create_index([("group_id", ASCENDING), ("created_at", ASCENDING)])
+        _database.group_activity.create_index([("group_id", ASCENDING), ("id", ASCENDING)])
+        _indexes_ready = True
+    return _database
 
-    ``manual_transactions=True`` puts the driver in autocommit mode so that
-    :func:`transaction` can issue an explicit ``BEGIN IMMEDIATE``.  The legacy
-    personal-expense routes keep the stdlib default (implicit transactions +
-    ``conn.commit()``) so they behave exactly as before.
-    """
-    conn = sqlite3.connect(
-        path or DEFAULT_DB_PATH,
-        timeout=10,
-        isolation_level=None if manual_transactions else "",
+
+def next_id(db, counter_name: str) -> int:
+    """Allocate an integer ID to keep existing Flask routes and templates compatible."""
+    from pymongo import ReturnDocument
+    doc = db.counters.find_one_and_update(
+        {"_id": counter_name},
+        {"$inc": {"value": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
     )
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 10000")
-    # WAL lets readers proceed while a writer is active (fewer "database is locked").
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
-
-
-def get_db() -> sqlite3.Connection:
-    """Request-scoped connection for the group module (closed automatically)."""
-    if "db" not in g:
-        g.db = connect(current_app.config["DATABASE"], manual_transactions=True)
-    return g.db
+    return int(doc["value"])
 
 
 def close_db(_exc=None) -> None:
-    conn = g.pop("db", None)
-    if conn is not None:
-        conn.close()
+    """Keep the MongoClient warm between serverless invocations; do not close it per request."""
+    return None
 
 
-@contextmanager
-def transaction(conn: sqlite3.Connection):
-    """Atomic write block: ``BEGIN IMMEDIATE`` ... ``COMMIT`` or full ``ROLLBACK``.
-
-    IMMEDIATE takes the write lock up-front, so "read balances, then insert a
-    settlement" cannot interleave with another request and overspend a debt.
-    """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        yield conn
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
+__all__ = ["BASE_DIR", "DEFAULT_DB_PATH", "DuplicateKeyError", "get_db", "next_id", "close_db"]
