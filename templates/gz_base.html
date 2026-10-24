@@ -1,0 +1,28 @@
+{#- Gen-ZSplit application shell: icons, skip-link, app bar, toasts, <main>.
+    Group pages extend this and fill {% block gz_content %}. -#}
+{% extends 'base.html' %}
+{% from 'partials/_macros.html' import icon, avatar %}
+
+{% block body_class %}gz{% endblock %}
+
+{% block head_extra %}
+    <meta name="theme-color" content="#090A1E">
+    <meta name="color-scheme" content="dark">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap">
+{% endblock %}
+
+{% block content %}
+    {% include 'partials/_icons.html' %}
+    <a class="gz-skip" href="#main">Skip to content</a>
+    {% include 'partials/_appbar.html' %}
+    {% include 'partials/_flash.html' %}
+    <main id="main" class="gz-main">
+        {% block gz_content %}{% endblock %}
+    </main>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='groups.js') }}" defer></script>
+{% endblock %}

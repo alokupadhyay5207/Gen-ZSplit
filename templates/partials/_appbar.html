@@ -1,0 +1,24 @@
+{% from 'partials/_macros.html' import icon, avatar %}
+<header class="gz-appbar gz-glass">
+    <div class="gz-appbar-inner">
+        <a class="gz-brand" href="{{ url_for('groups.index') }}" aria-label="Gen-ZSplit home">
+            <svg class="gz-logo" viewBox="0 0 32 32" aria-hidden="true">
+                <defs><linearGradient id="gz-lg" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stop-color="#818CF8"/><stop offset="1" stop-color="#C084FC"/>
+                </linearGradient></defs>
+                <rect x="2" y="2" width="28" height="28" rx="9" fill="url(#gz-lg)"/>
+                <path d="M9 12.5h10.5M9 12.5l3-3M23 19.5H12.5M23 19.5l-3 3" fill="none" stroke="#0B0C26" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Gen-ZSplit</span>
+        </a>
+        <nav class="gz-nav" aria-label="Primary">
+            <a href="{{ url_for('dashboard') }}">{{ icon('grid') }}<span>Personal</span></a>
+            <a href="{{ url_for('groups.index') }}" {% if request.blueprint == 'groups' %}aria-current="page"{% endif %}>{{ icon('users') }}<span>Groups</span></a>
+        </nav>
+        <div class="gz-appbar-user">
+            {{ avatar(session.get('user_name', 'You')) }}
+            <span class="gz-appbar-name">{{ session.get('user_name', 'You') }}</span>
+            <a class="gz-iconbtn" href="{{ url_for('logout') }}" aria-label="Log out" title="Log out">{{ icon('logout') }}</a>
+        </div>
+    </div>
+</header>

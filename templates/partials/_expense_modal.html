@@ -1,0 +1,88 @@
+{# Add-expense dialog. `form` is {} on a fresh page and the submitted MultiDict after a
+   failed POST, so a validation error never costs the user their input. #}
+{% from 'partials/_macros.html' import csrf, icon, avatar, modal_head %}
+{% set picked = form.getlist('participants') if form.getlist is defined else [] %}
+{% set method = form.get('split_method', 'equal') %}
+<dialog class="gz-modal gz-modal--wide" id="expense-modal" aria-labelledby="expense-modal-title" {% if open_modal == 'expense' %}data-autoopen{% endif %}>
+    <form method="post" action="{{ url_for('groups.add_expense', group_id=group['id']) }}" class="gz-modal-form" id="expense-form" data-once
+          data-method="{{ method }}" data-exp="{{ CURRENCY_EXPONENT[cur] }}" data-symbol="{{ CURRENCY_SYMBOLS[cur] }}" data-currency="{{ cur }}">
+        {{ csrf() }}
+        {{ modal_head('expense-modal', 'Add an expense', 'Paid by one person, shared however you like.') }}
+        <div class="gz-modal-body">
+            {% if error %}<div class="gz-alert" role="alert">{{ icon('alert') }}<span>{{ error }}</span></div>{% endif %}
+
+            <div class="gz-field">
+                <label class="gz-label" for="ex-amount">Amount</label>
+                <div class="gz-amount">
+                    <span class="gz-amount-sym" aria-hidden="true">{{ CURRENCY_SYMBOLS[cur] }}</span>
+                    <input id="ex-amount" name="amount" autofocus inputmode="decimal" autocomplete="off" required placeholder="0" value="{{ form.get('amount', '') }}">
+                </div>
+            </div>
+
+            <div class="gz-field">
+                <label class="gz-label" for="ex-title">What was it for?</label>
+                <input class="gz-input" id="ex-title" name="title" required maxlength="120" placeholder="Beach shack dinner" value="{{ form.get('title', '') }}">
+            </div>
+
+            <div class="gz-row">
+                <div class="gz-field">
+                    <label class="gz-label" for="ex-cat">Category</label>
+                    <select class="gz-select" id="ex-cat" name="category">
+                        {% for c in categories %}<option value="{{ c }}" {% if form.get('category') == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="gz-field">
+                    <label class="gz-label" for="ex-date">Date</label>
+                    <input class="gz-input" id="ex-date" type="date" name="expense_date" value="{{ form.get('expense_date', today) }}">
+                </div>
+            </div>
+
+            <div class="gz-field">
+                <label class="gz-label" for="ex-paid">Paid by</label>
+                <select class="gz-select" id="ex-paid" name="paid_by">
+                    {% set payer = form.get('paid_by', me['user_id']|string) %}
+                    {% for m in members %}<option value="{{ m['user_id'] }}" {% if m['user_id']|string == payer %}selected{% endif %}>{{ m['name'] }}{% if m['user_id'] == me['user_id'] %} (you){% endif %}</option>{% endfor %}
+                </select>
+            </div>
+
+            <div class="gz-field">
+                <span class="gz-label" id="ex-method-label">How should it be split?</span>
+                <div class="gz-seg" role="radiogroup" aria-labelledby="ex-method-label">
+                    <label><input type="radio" name="split_method" value="equal" {% if method == 'equal' %}checked{% endif %}><span>Equally</span></label>
+                    <label><input type="radio" name="split_method" value="exact" {% if method == 'exact' %}checked{% endif %}><span>By amount</span></label>
+                    <label><input type="radio" name="split_method" value="percentage" {% if method == 'percentage' %}checked{% endif %}><span>By percent</span></label>
+                </div>
+            </div>
+
+            <div class="gz-people">
+                <div class="gz-people-bar">
+                    <span class="gz-label">Split between</span>
+                    <span><button type="button" class="gz-linkbtn" data-select="all">Everyone</button><button type="button" class="gz-linkbtn" data-select="none">No one</button></span>
+                </div>
+                {% for m in members %}
+                <label class="gz-person" data-person>
+                    <input class="gz-check" type="checkbox" name="participants" value="{{ m['user_id'] }}" {% if not form or m['user_id']|string in picked %}checked{% endif %}>
+                    {{ avatar(m['name']) }}
+                    <span class="gz-person-name">{{ m['name'] }}{% if m['user_id'] == me['user_id'] %} <span class="gz-faint">(you)</span>{% endif %}</span>
+                    <span class="gz-person-value">
+                        <span class="gz-unit gz-unit-cur">{{ CURRENCY_SYMBOLS[cur] }}</span>
+                        <input name="exact_{{ m['user_id'] }}" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Amount for {{ m['name'] }}" value="{{ form.get('exact_' ~ m['user_id'], '') }}" disabled>
+                        <input name="percent_{{ m['user_id'] }}" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Percent for {{ m['name'] }}" value="{{ form.get('percent_' ~ m['user_id'], '') }}" disabled>
+                        <span class="gz-unit gz-unit-pct">%</span>
+                    </span>
+                </label>
+                {% endfor %}
+                <div class="gz-summary" data-split-summary aria-live="polite"></div>
+            </div>
+
+            <div class="gz-field">
+                <label class="gz-label" for="ex-notes">Notes <span class="gz-faint">(optional)</span></label>
+                <textarea class="gz-textarea" id="ex-notes" name="notes" rows="2" maxlength="500" placeholder="Anything the group should know">{{ form.get('notes', '') }}</textarea>
+            </div>
+        </div>
+        <footer class="gz-modal-foot">
+            <button type="button" class="gz-btn gz-btn--ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="gz-btn gz-btn--primary">Add expense</button>
+        </footer>
+    </form>
+</dialog>

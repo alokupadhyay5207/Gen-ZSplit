@@ -1,0 +1,262 @@
+{% extends 'gz_base.html' %}
+{% from 'partials/_macros.html' import csrf, icon, avatar, modal_head %}
+{% set cur = group['currency'] %}
+{% set state = 'owed' if my_net > 0 else ('owes' if my_net < 0 else 'even') %}
+{% set feed_icon = {'expense_added': 'receipt', 'expense_deleted': 'trash', 'settlement': 'check',
+                    'member_joined': 'user-plus', 'member_added': 'user-plus', 'member_left': 'logout',
+                    'member_removed': 'logout', 'group_created': 'sparkle'} %}
+{% set cat_hue = {'Food': 28, 'Travel': 205, 'Hotel': 265, 'Shopping': 320, 'Utilities': 170, 'Entertainment': 295, 'Other': 240} %}
+{% block title %}{{ group['name'] }} · Gen-ZSplit{% endblock %}
+
+{% block gz_content %}
+<nav class="gz-crumbs" aria-label="Breadcrumb">
+    <a href="{{ url_for('groups.index') }}">{{ icon('chev-left') }} All groups</a>
+</nav>
+
+{# ================= Hero: where do I stand? ================= #}
+<section class="gz-hero gz-glass" data-state="{{ state }}" aria-labelledby="group-title">
+    <div class="gz-hero-head">
+        <span class="gz-glyph" style="--h: {{ group['name']|hue }}" aria-hidden="true">{{ group['name'][0]|upper }}</span>
+        <div>
+            <h1 class="gz-h1" id="group-title">{{ group['name'] }}</h1>
+            <p class="gz-lede">{{ group['description'] or 'Shared expenses for this group.' }}</p>
+        </div>
+        <div class="gz-hero-actions">
+            <button type="button" class="gz-btn gz-btn--primary" data-open-modal="expense-modal">{{ icon('plus') }} Add expense</button>
+        </div>
+    </div>
+
+    <div class="gz-position" aria-live="polite">
+        {% if my_net > 0 %}
+            <p class="gz-position-label">You're owed</p>
+            <p class="gz-position-amount">{{ my_net|money(cur) }}</p>
+        {% elif my_net < 0 %}
+            <p class="gz-position-label">You owe</p>
+            <p class="gz-position-amount">{{ (-my_net)|money(cur) }}</p>
+        {% elif pager.total %}
+            <p class="gz-position-label">Your balance</p>
+            <p class="gz-position-amount">All settled up</p>
+        {% else %}
+            <p class="gz-position-label">Your balance</p>
+            <p class="gz-position-amount">No expenses yet</p>
+        {% endif %}
+    </div>
+
+    <div class="gz-spine-wrap">
+        <h2 class="gz-h3">Where everyone stands</h2>
+        <ul class="gz-spine">
+            {% for b in balances %}
+            <li class="gz-spine-row" style="--w: {{ ((b['net']|abs) / reach * 100)|round(1) }}%">
+                <div class="gz-spine-who">{{ avatar(b['name']) }}<span>{{ b['name'] }}{% if b['user_id'] == me['user_id'] %} <span class="gz-faint">(you)</span>{% endif %}</span></div>
+                <div class="gz-spine-track" aria-hidden="true">
+                    {% if b['net'] != 0 %}<span class="gz-spine-bar {{ 'is-owed' if b['net'] > 0 else 'is-owes' }}"></span>{% endif %}
+                </div>
+                <div class="gz-spine-amt {{ 'is-owed' if b['net'] > 0 else ('is-owes' if b['net'] < 0 else '') }}">
+                    {% if b['net'] > 0 %}<small>is owed</small>{{ b['net']|money(cur) }}
+                    {% elif b['net'] < 0 %}<small>owes</small>{{ (-b['net'])|money(cur) }}
+                    {% else %}<small>settled</small>{{ 0|money(cur) }}{% endif %}
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <dl class="gz-facts">
+        <div><dt>Total spent</dt><dd>{{ total_minor|money(cur) }}</dd></div>
+        <div><dt>Expenses</dt><dd>{{ pager.total }}</dd></div>
+        <div><dt>People</dt><dd>{{ members|length }}</dd></div>
+    </dl>
+</section>
+
+<div class="gz-cols">
+    <div class="gz-stack">
+
+        {# ================= Settle up ================= #}
+        <section class="gz-panel" aria-labelledby="settle-title">
+            <div class="gz-panel-head"><h2 class="gz-h2" id="settle-title">Settle up</h2></div>
+            {% if transfers %}
+            <ul class="gz-transfers">
+                {% for t in transfers %}
+                <li class="gz-transfer">
+                    {{ avatar(t['from_name']) }}
+                    <div class="gz-transfer-text"><strong>{{ t['from_name'] }}</strong> pays <strong>{{ t['to_name'] }}</strong><small>Suggested to clear every balance</small></div>
+                    <span class="gz-transfer-amt">{{ t['amount']|money(cur) }}</span>
+                    {% if is_owner or me['user_id'] in (t['from_id'], t['to_id']) %}
+                    <form method="post" action="{{ url_for('groups.settle', group_id=group['id']) }}" data-once>
+                        {{ csrf() }}
+                        <input type="hidden" name="payer_id" value="{{ t['from_id'] }}">
+                        <input type="hidden" name="receiver_id" value="{{ t['to_id'] }}">
+                        <input type="hidden" name="amount" value="{{ to_input_value(t['amount'], cur) }}">
+                        <button type="submit" class="gz-btn gz-btn--soft gz-btn--sm">{{ icon('check') }} Mark as paid</button>
+                    </form>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="gz-allclear">{{ icon('check-circle') }} <span>{% if pager.total %}Nobody owes anybody. You're all square.{% else %}Nothing to settle yet. Add an expense to get started.{% endif %}</span></div>
+            {% endif %}
+        </section>
+
+        {# ================= Expenses ================= #}
+        <section class="gz-panel" aria-labelledby="exp-title">
+            <div class="gz-panel-head">
+                <h2 class="gz-h2" id="exp-title">Expenses</h2>
+                <button type="button" class="gz-btn gz-btn--soft gz-btn--sm" data-open-modal="expense-modal">{{ icon('plus') }} Add</button>
+            </div>
+            {% if expenses %}
+            <div class="gz-table-wrap">
+                <table class="gz-table">
+                    <caption class="gz-sr">Expenses in {{ group['name'] }}, newest first</caption>
+                    <thead><tr><th scope="col">Expense</th><th scope="col">Paid by</th><th scope="col" class="is-end">Total</th><th scope="col" class="is-end">Your part</th><th scope="col"><span class="gz-sr">Actions</span></th></tr></thead>
+                    <tbody>
+                    {% for e in expenses %}
+                    {% set mine = e['my_share_minor'] %}
+                    <tr>
+                        <td data-label="Expense">
+                            <div class="gz-table-title">{{ e['title'] }}</div>
+                            <div class="gz-table-sub">
+                                <span class="gz-chip" style="--h: {{ cat_hue.get(e['category'], 240) }}">{{ e['category'] }}</span>
+                                <span>{{ e['expense_date']|short_date }}</span>
+                                <span>split {{ {'equal': 'equally', 'exact': 'by amount', 'percentage': 'by percent'}[e['split_method']] }} between {{ e['split_count'] }}</span>
+                                <span class="gz-sr-mobile">paid by {{ e['payer_name'] }}</span>
+                            </div>
+                        </td>
+                        <td data-label="Paid by"><span class="gz-payer">{{ avatar(e['payer_name']) }}{{ e['payer_name'] }}</span></td>
+                        <td data-label="Total" class="is-end gz-money">{{ e['amount_minor']|money(cur) }}</td>
+                        <td data-label="Your part" class="is-end">
+                            {% if e['paid_by'] == me['user_id'] %}
+                                {% set lent = e['amount_minor'] - (mine or 0) %}
+                                {% if lent > 0 %}<span class="gz-money is-owed">You lent {{ lent|money(cur) }}</span>{% else %}<span class="gz-muted">Only you</span>{% endif %}
+                            {% elif mine %}<span class="gz-money is-owes">You owe {{ mine|money(cur) }}</span>
+                            {% else %}<span class="gz-faint">Not involved</span>{% endif %}
+                        </td>
+                        <td data-label="" class="is-end">
+                            {% if e['created_by'] == me['user_id'] or is_owner %}
+                            <button type="button" class="gz-iconbtn gz-iconbtn--danger gz-iconbtn--sm" aria-label="Delete {{ e['title'] }}"
+                                    data-confirm data-action="{{ url_for('groups.delete_expense', group_id=group['id'], expense_id=e['id']) }}"
+                                    data-title="Delete this expense?" data-body="“{{ e['title'] }}” will be removed and everyone's balance recalculated."
+                                    data-button="Delete expense">{{ icon('trash') }}</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if pager.pages > 1 %}
+            <nav class="gz-pager" aria-label="Expense pages">
+                <span>Page {{ pager.page }} of {{ pager.pages }}</span>
+                <div>
+                    <a class="gz-btn gz-btn--ghost gz-btn--sm {% if pager.page <= 1 %}is-off{% endif %}" href="{{ url_for('groups.detail', group_id=group['id'], page=pager.page - 1) }}">Newer</a>
+                    <a class="gz-btn gz-btn--ghost gz-btn--sm {% if pager.page >= pager.pages %}is-off{% endif %}" href="{{ url_for('groups.detail', group_id=group['id'], page=pager.page + 1) }}">Older</a>
+                </div>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="gz-empty gz-empty--inline">
+                <h3 class="gz-h3">No expenses yet</h3>
+                <p>Add the first one and it will be split between the people you choose.</p>
+                <div class="gz-btn-row"><button type="button" class="gz-btn gz-btn--primary gz-btn--sm" data-open-modal="expense-modal">{{ icon('plus') }} Add expense</button></div>
+            </div>
+            {% endif %}
+        </section>
+    </div>
+
+    {# ================= Side column ================= #}
+    <aside class="gz-stack" aria-label="Group details">
+        <section class="gz-panel gz-invite" aria-labelledby="invite-title">
+            <h2 class="gz-h3" id="invite-title">Invite code</h2>
+            <code class="gz-invite-code" id="invite-code">{{ group['invite_code']|invite }}</code>
+            <button type="button" class="gz-btn gz-btn--soft gz-btn--sm" data-copy="{{ group['invite_code']|invite }}">{{ icon('copy') }} <span data-copy-label>Copy code</span></button>
+            <p class="gz-hint" style="margin-top:12px">New people also need the group password you chose when creating it.</p>
+        </section>
+
+        <section class="gz-panel" aria-labelledby="members-title">
+            <div class="gz-panel-head">
+                <h2 class="gz-h2" id="members-title">People</h2>
+                {% if is_owner %}<button type="button" class="gz-btn gz-btn--soft gz-btn--sm" data-open-modal="member-modal">{{ icon('user-plus') }} Add</button>{% endif %}
+            </div>
+            <ul class="gz-members">
+                {% for m in members %}
+                <li class="gz-member">
+                    {{ avatar(m['name']) }}
+                    <div class="gz-member-info"><strong>{{ m['name'] }}{% if m['user_id'] == me['user_id'] %} (you){% endif %}</strong><small>{{ 'Owner' if m['role'] == 'owner' else 'Member' }}, {{ m['email'] }}</small></div>
+                    {% if is_owner and m['role'] != 'owner' %}
+                    <button type="button" class="gz-iconbtn gz-iconbtn--danger gz-iconbtn--sm" aria-label="Remove {{ m['name'] }}"
+                            data-confirm data-action="{{ url_for('groups.remove_member', group_id=group['id'], user_id=m['user_id']) }}"
+                            data-title="Remove {{ m['name'] }}?" data-body="They keep their history, but can't see or add to the group unless they rejoin. This only works once their balance is settled."
+                            data-button="Remove">{{ icon('close') }}</button>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </section>
+
+        <section class="gz-panel" aria-labelledby="activity-title">
+            <div class="gz-panel-head"><h2 class="gz-h2" id="activity-title">Activity</h2></div>
+            <ol class="gz-feed">
+                {% for a in activity %}
+                <li>
+                    <span class="gz-feed-ico">{{ icon(feed_icon.get(a['kind'], 'info')) }}</span>
+                    <div><p>{{ a['description'] }}</p><small>{{ a['created_at']|ago }}</small></div>
+                </li>
+                {% else %}<li><p class="gz-muted">Nothing yet.</p></li>{% endfor %}
+            </ol>
+        </section>
+
+        <section class="gz-panel gz-danger">
+            {% if is_owner %}
+                <p>Deleting the group permanently removes every expense, payment and member record.</p>
+                <button type="button" class="gz-btn gz-btn--danger gz-btn--sm" data-open-modal="delete-modal">{{ icon('trash') }} Delete group</button>
+            {% else %}
+                <p>Leave this group once you have no balance left to settle.</p>
+                <button type="button" class="gz-btn gz-btn--danger gz-btn--sm" data-confirm data-action="{{ url_for('groups.leave', group_id=group['id']) }}"
+                        data-title="Leave {{ group['name'] }}?" data-body="You can rejoin later with the invite code and password." data-button="Leave group">{{ icon('logout') }} Leave group</button>
+            {% endif %}
+        </section>
+    </aside>
+</div>
+
+<button type="button" class="gz-btn gz-btn--primary gz-fab" data-open-modal="expense-modal">{{ icon('plus') }} Add expense</button>
+
+{% include 'partials/_expense_modal.html' %}
+{% include 'partials/_confirm.html' %}
+
+{% if is_owner %}
+<dialog class="gz-modal" id="member-modal" aria-labelledby="member-modal-title">
+    <form method="post" action="{{ url_for('groups.add_member', group_id=group['id']) }}" class="gz-modal-form" data-once>
+        {{ csrf() }}
+        {{ modal_head('member-modal', 'Add someone', 'They need a Gen-ZSplit account with this email.') }}
+        <div class="gz-modal-body">
+            <div class="gz-field">
+                <label class="gz-label" for="am-email">Email address</label>
+                <input class="gz-input" id="am-email" type="email" name="email" autofocus required maxlength="254" placeholder="friend@example.com" autocomplete="off">
+                <p class="gz-hint">No account yet? Share the invite code and group password instead.</p>
+            </div>
+        </div>
+        <footer class="gz-modal-foot">
+            <button type="button" class="gz-btn gz-btn--ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="gz-btn gz-btn--primary">Add to group</button>
+        </footer>
+    </form>
+</dialog>
+
+<dialog class="gz-modal" id="delete-modal" aria-labelledby="delete-modal-title">
+    <form method="post" action="{{ url_for('groups.delete', group_id=group['id']) }}" class="gz-modal-form" data-once>
+        {{ csrf() }}
+        {{ modal_head('delete-modal', 'Delete this group?', 'This cannot be undone.') }}
+        <div class="gz-modal-body">
+            <div class="gz-field">
+                <label class="gz-label" for="dg-name">Type <strong>{{ group['name'] }}</strong> to confirm</label>
+                <input class="gz-input" id="dg-name" name="confirm_name" autofocus required autocomplete="off" placeholder="{{ group['name'] }}">
+            </div>
+        </div>
+        <footer class="gz-modal-foot">
+            <button type="button" class="gz-btn gz-btn--ghost" data-close-modal>Keep group</button>
+            <button type="submit" class="gz-btn gz-btn--danger">Delete forever</button>
+        </footer>
+    </form>
+</dialog>
+{% endif %}
+{% endblock %}

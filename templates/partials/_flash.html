@@ -1,0 +1,15 @@
+{% from 'partials/_macros.html' import icon %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="gz-toasts" role="region" aria-label="Notifications">
+    {% for category, message in messages %}
+    {% set kind = category if category in ('success', 'error') else 'info' %}
+    <div class="gz-toast gz-toast--{{ kind }}" role="{{ 'alert' if kind == 'error' else 'status' }}" data-toast data-kind="{{ kind }}">
+        {{ icon({'success': 'check-circle', 'error': 'alert', 'info': 'info'}[kind]) }}
+        <p>{{ message }}</p>
+        <button type="button" class="gz-iconbtn gz-iconbtn--sm" data-dismiss aria-label="Dismiss message">{{ icon('close') }}</button>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endwith %}

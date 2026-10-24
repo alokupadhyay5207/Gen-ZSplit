@@ -1,0 +1,131 @@
+{% extends 'gz_base.html' %}
+{% from 'partials/_macros.html' import csrf, icon, modal_head %}
+{% block title %}Your groups · Gen-ZSplit{% endblock %}
+
+{% block gz_content %}
+<header class="gz-pagehead">
+    <div>
+        <h1 class="gz-h1">Your groups</h1>
+        <p class="gz-lede">Split trips, flats and nights out without the awkward maths.</p>
+    </div>
+    <div class="gz-pagehead-actions">
+        <button type="button" class="gz-btn gz-btn--ghost" data-open-modal="join-modal">{{ icon('key') }} Join with a code</button>
+        <button type="button" class="gz-btn gz-btn--primary" data-open-modal="create-modal">{{ icon('plus') }} New group</button>
+    </div>
+</header>
+
+{% if groups %}
+<ul class="gz-grid">
+    {% for grp in groups %}
+    <li>
+        <a class="gz-gcard" href="{{ url_for('groups.detail', group_id=grp['id']) }}" style="--h: {{ grp['name']|hue }}">
+            <div class="gz-gcard-top">
+                <span class="gz-glyph" aria-hidden="true">{{ grp['name'][0]|upper }}</span>
+                <div class="gz-gcard-title">
+                    <h2>{{ grp['name'] }}</h2>
+                    <p>{{ grp['description'] or 'No description yet.' }}</p>
+                </div>
+                {% if grp['role'] == 'owner' %}<span class="gz-tag">Owner</span>{% endif %}
+            </div>
+            <div class="gz-gcard-foot">
+                <p class="gz-gcard-meta">
+                    {{ grp['member_count'] }} {{ 'person' if grp['member_count'] == 1 else 'people' }},
+                    {{ grp['expense_count'] }} {{ 'expense' if grp['expense_count'] == 1 else 'expenses' }}
+                </p>
+                {% if grp['net_minor'] > 0 %}
+                    <p class="gz-pos is-owed">You're owed <strong>{{ grp['net_minor']|money(grp['currency']) }}</strong></p>
+                {% elif grp['net_minor'] < 0 %}
+                    <p class="gz-pos is-owes">You owe <strong>{{ (-grp['net_minor'])|money(grp['currency']) }}</strong></p>
+                {% elif grp['expense_count'] %}
+                    <p class="gz-pos">Settled up</p>
+                {% else %}
+                    <p class="gz-pos">No expenses yet</p>
+                {% endif %}
+            </div>
+        </a>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<section class="gz-empty">
+    <svg viewBox="0 0 120 90" aria-hidden="true">
+        <defs>
+            <linearGradient id="gz-e1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#6366f1"/></linearGradient>
+            <linearGradient id="gz-e2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c084fc"/><stop offset="1" stop-color="#a855f7"/></linearGradient>
+        </defs>
+        <circle cx="46" cy="46" r="30" fill="url(#gz-e1)" opacity=".9"/>
+        <circle cx="76" cy="46" r="30" fill="url(#gz-e2)" opacity=".75"/>
+        <path d="M38 40h24m0 0-6-6m6 6-6 6M82 52H58m0 0 6-6m-6 6 6 6" fill="none" stroke="#0b0c26" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>
+    </svg>
+    <h2 class="gz-h2">No groups yet</h2>
+    <p>Create a group for your trip or flat, then share its invite code. Everyone's balance updates as expenses are added.</p>
+    <div class="gz-btn-row">
+        <button type="button" class="gz-btn gz-btn--primary" data-open-modal="create-modal">{{ icon('plus') }} Create your first group</button>
+        <button type="button" class="gz-btn gz-btn--ghost" data-open-modal="join-modal">{{ icon('key') }} I have an invite code</button>
+    </div>
+</section>
+{% endif %}
+
+{# ---------- Create group ---------- #}
+<dialog class="gz-modal" id="create-modal" aria-labelledby="create-modal-title">
+    <form method="post" action="{{ url_for('groups.create') }}" class="gz-modal-form" data-once>
+        {{ csrf() }}
+        {{ modal_head('create-modal', 'Create a group', 'You become the owner and can add or remove people.') }}
+        <div class="gz-modal-body">
+            <div class="gz-field">
+                <label class="gz-label" for="cg-name">Group name</label>
+                <input class="gz-input" id="cg-name" name="name" autofocus required minlength="2" maxlength="60" placeholder="Goa trip" autocomplete="off">
+            </div>
+            <div class="gz-field">
+                <label class="gz-label" for="cg-desc">Description <span class="gz-faint">(optional)</span></label>
+                <textarea class="gz-textarea" id="cg-desc" name="description" maxlength="280" rows="2" placeholder="Who is this for?"></textarea>
+            </div>
+            <div class="gz-field">
+                <span class="gz-label" id="cg-cur-label">Currency</span>
+                <div class="gz-seg gz-seg--wrap" role="radiogroup" aria-labelledby="cg-cur-label">
+                    {% for code in currencies %}
+                    <label><input type="radio" name="currency" value="{{ code }}" {% if loop.first %}checked{% endif %}><span>{% if CURRENCY_SYMBOLS[code] != code %}{{ CURRENCY_SYMBOLS[code] }} {% endif %}{{ code }}</span></label>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="gz-field">
+                <label class="gz-label" for="cg-pw">Group password</label>
+                <div class="gz-pw">
+                    <input class="gz-input" id="cg-pw" type="password" name="password" required minlength="6" maxlength="128" autocomplete="new-password" placeholder="At least 6 characters">
+                    <button type="button" class="gz-iconbtn" data-toggle-pw aria-label="Show password" aria-pressed="false">{{ icon('eye') }}</button>
+                </div>
+                <p class="gz-hint">People join with the invite code plus this password. Share both only with people you trust.</p>
+            </div>
+        </div>
+        <footer class="gz-modal-foot">
+            <button type="button" class="gz-btn gz-btn--ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="gz-btn gz-btn--primary">Create group</button>
+        </footer>
+    </form>
+</dialog>
+
+{# ---------- Join group ---------- #}
+<dialog class="gz-modal" id="join-modal" aria-labelledby="join-modal-title">
+    <form method="post" action="{{ url_for('groups.join') }}" class="gz-modal-form" data-once>
+        {{ csrf() }}
+        {{ modal_head('join-modal', 'Join a group', 'Ask the group owner for the invite code and password.') }}
+        <div class="gz-modal-body">
+            <div class="gz-field">
+                <label class="gz-label" for="jg-code">Invite code</label>
+                <input class="gz-input gz-code-input" id="jg-code" name="code" autofocus required maxlength="9" placeholder="ABCD-EFGH" autocomplete="off" autocapitalize="characters" spellcheck="false">
+            </div>
+            <div class="gz-field">
+                <label class="gz-label" for="jg-pw">Group password</label>
+                <div class="gz-pw">
+                    <input class="gz-input" id="jg-pw" type="password" name="password" required autocomplete="off">
+                    <button type="button" class="gz-iconbtn" data-toggle-pw aria-label="Show password" aria-pressed="false">{{ icon('eye') }}</button>
+                </div>
+            </div>
+        </div>
+        <footer class="gz-modal-foot">
+            <button type="button" class="gz-btn gz-btn--ghost" data-close-modal>Cancel</button>
+            <button type="submit" class="gz-btn gz-btn--primary">Join group</button>
+        </footer>
+    </form>
+</dialog>
+{% endblock %}

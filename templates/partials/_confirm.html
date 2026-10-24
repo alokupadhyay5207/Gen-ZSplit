@@ -1,0 +1,16 @@
+{# One reusable confirmation dialog. Triggers carry data-confirm + data-action/title/body/button. #}
+{% from 'partials/_macros.html' import csrf, icon %}
+<dialog class="gz-modal" id="confirm-modal" aria-labelledby="confirm-title">
+    <form method="post" action="" class="gz-modal-form" data-confirm-form data-once>
+        {{ csrf() }}
+        <header class="gz-modal-head">
+            <h2 class="gz-h2" id="confirm-title" data-confirm-title>Are you sure?</h2>
+            <button type="button" class="gz-iconbtn" data-close-modal aria-label="Close dialog">{{ icon('close') }}</button>
+        </header>
+        <div class="gz-modal-body"><p class="gz-muted" data-confirm-body></p></div>
+        <footer class="gz-modal-foot">
+            <button type="button" class="gz-btn gz-btn--ghost" data-close-modal>Keep it</button>
+            <button type="submit" class="gz-btn gz-btn--danger" data-confirm-button>Confirm</button>
+        </footer>
+    </form>
+</dialog>

@@ -1,0 +1,24 @@
+{# Shared macros for the Gen-ZSplit templates. #}
+
+{% macro csrf() -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+{%- endmacro %}
+
+{% macro icon(name, cls='') -%}
+<svg class="gz-icon {{ cls }}" aria-hidden="true" focusable="false"><use href="#i-{{ name }}"></use></svg>
+{%- endmacro %}
+
+{# Deterministic coloured initials; the hue comes from the |hue filter. #}
+{% macro avatar(name, size='') -%}
+<span class="gz-avatar {{ size }}" style="--h: {{ name|hue }}" aria-hidden="true">{{ name|initials }}</span>
+{%- endmacro %}
+
+{% macro modal_head(id, title, sub='') -%}
+<header class="gz-modal-head">
+    <div>
+        <h2 class="gz-h2" id="{{ id }}-title">{{ title }}</h2>
+        {% if sub %}<p class="gz-muted">{{ sub }}</p>{% endif %}
+    </div>
+    <button type="button" class="gz-iconbtn" data-close-modal aria-label="Close dialog">{{ icon('close') }}</button>
+</header>
+{%- endmacro %}

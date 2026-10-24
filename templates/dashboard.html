@@ -1,0 +1,326 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+
+<div class="dashboard-shell">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-logo">💰</div>
+            <div>
+                <h2>Expense Tracker</h2>
+                <p>Smart Finance Panel</p>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('dashboard') }}" class="nav-item active">📊 Dashboard</a>
+            <a href="#budget-section" class="nav-item">💼 Budget</a>
+            <a href="{{ url_for('groups.index') }}" class="nav-item">👥 Groups</a>
+            <a href="#expense-section" class="nav-item">🧾 Expenses</a>
+            <a href="#reports-section" class="nav-item">📁 Reports</a>
+            <a href="{{ url_for('logout') }}" class="nav-item logout-nav">🚪 Logout</a>
+        </nav>
+
+        <div class="theme-switch-box">
+            <button class="theme-toggle sidebar-theme-toggle" id="themeToggle">🌙 Dark Mode</button>
+        </div>
+    </aside>
+
+    <main class="main-dashboard">
+        <div class="dashboard-topbar">
+            <div>
+                <h1>Welcome, {{ user_name }}</h1>
+                <p>Your premium financial control center</p>
+            </div>
+        </div>
+
+        <section class="hero-banner">
+            <div class="hero-text">
+                <h2>Financial Overview</h2>
+                <p>Stay ahead of your budget with elegant analytics, live counters, and visually rich insights.</p>
+            </div>
+            <div class="hero-image">
+                <img src="https://cdn-icons-png.flaticon.com/512/3135/3135706.png" alt="Finance Banner">
+            </div>
+        </section>
+
+        <section class="card-grid">
+            <div class="summary-card total-card">
+                <span class="card-label">Total Expense</span>
+                <h3 class="counter" data-target="{{ '%.2f'|format(total_expense) }}">0</h3>
+                <p>Based on current filtered records</p>
+            </div>
+
+            <div class="summary-card budget-card" id="budget-section">
+                <span class="card-label">Budget Limit</span>
+                <h3 class="counter" data-target="{{ '%.2f'|format(budget_limit if budget_limit else 0) }}">0</h3>
+                <p>Your current monthly target</p>
+            </div>
+
+            <div class="summary-card remaining-card">
+                <span class="card-label">Remaining Budget</span>
+                <h3 class="counter" data-target="{{ '%.2f'|format(remaining_budget if budget_limit else 0) }}">0</h3>
+                <p>Still available to spend</p>
+            </div>
+
+            <div class="summary-card category-card">
+                <span class="card-label">Highest Category</span>
+                <h3>{{ highest_category }}</h3>
+                <p>Top spending area right now</p>
+            </div>
+        </section>
+
+        <section class="progress-box">
+            <div class="progress-header">
+                <h3>Budget Usage</h3>
+                <span>{{ budget_percentage }}%</span>
+            </div>
+            <div class="progress-bar modern-progress">
+                <div class="progress-fill" style="width: {{ budget_percentage }}%;"></div>
+            </div>
+            <p>Track your monthly budget performance visually.</p>
+        </section>
+
+        <section class="chart-grid">
+            <div class="chart-card">
+                <div class="chart-title-row">
+                    <h3>Category Distribution</h3>
+                    <span>Doughnut Chart</span>
+                </div>
+                <canvas id="categoryChart"></canvas>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-title-row">
+                    <h3>Monthly Expense</h3>
+                    <span>Bar Chart</span>
+                </div>
+                <canvas id="monthlyChart"></canvas>
+            </div>
+
+            <div class="chart-card full-width">
+                <div class="chart-title-row">
+                    <h3>Expense Trend</h3>
+                    <span>Line Chart</span>
+                </div>
+                <canvas id="trendChart"></canvas>
+            </div>
+        </section>
+
+        <section class="form-card" id="expense-section">
+            <h3>Filter, Search & Sort Expenses</h3>
+            <form method="GET" action="{{ url_for('dashboard') }}" class="filter-grid">
+                <input type="text" name="search" placeholder="Search by title" value="{{ search_query }}">
+
+                <select name="category">
+                    <option value="">All Categories</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat['category'] }}" {% if selected_category == cat['category'] %}selected{% endif %}>
+                        {{ cat['category'] }}
+                    </option>
+                    {% endfor %}
+                </select>
+
+                <input type="date" name="start_date" value="{{ start_date }}">
+                <input type="date" name="end_date" value="{{ end_date }}">
+
+                <select name="sort_by">
+                    <option value="date" {% if sort_by == 'date' %}selected{% endif %}>Sort by Date</option>
+                    <option value="amount" {% if sort_by == 'amount' %}selected{% endif %}>Sort by Amount</option>
+                    <option value="title" {% if sort_by == 'title' %}selected{% endif %}>Sort by Title</option>
+                </select>
+
+                <select name="sort_order">
+                    <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
+                    <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
+                </select>
+
+                <button type="submit">Apply</button>
+                <a class="clear-filter-btn" href="{{ url_for('dashboard') }}">Clear</a>
+            </form>
+        </section>
+
+        <section class="dual-form-grid">
+            <div class="form-card">
+                <h3>Set Monthly Budget</h3>
+                <form method="POST" action="{{ url_for('set_budget') }}" class="expense-form">
+                    <input type="number" step="0.01" name="budget_limit" placeholder="Enter monthly budget" required>
+                    <button type="submit">Set Budget</button>
+                </form>
+            </div>
+
+            <div class="form-card premium-expense-card">
+                <div class="expense-card-header">
+                    <div>
+                        <span class="section-badge">Quick Entry</span>
+                        <h3>Add New Expense</h3>
+                        <p>Record your spending beautifully and keep your budget under control.</p>
+                    </div>
+                    <div class="expense-header-icon">💸</div>
+                </div>
+
+                <form method="POST" action="{{ url_for('add_expense') }}" class="premium-expense-form">
+                    <div class="premium-form-grid">
+                        <div class="input-box">
+                            <label>Expense Title</label>
+                            <input type="text" name="title" placeholder="e.g. Grocery Shopping" required>
+                        </div>
+
+                        <div class="input-box">
+                            <label>Amount</label>
+                            <input type="number" step="0.01" name="amount" placeholder="e.g. 500" required>
+                        </div>
+
+                        <div class="input-box">
+                            <label>Category</label>
+                            <select name="category" required>
+                                <option value="">Select Category</option>
+                                <option value="Food">Food</option>
+                                <option value="Transportation">Transportation</option>
+                                <option value="Shopping">Shopping</option>
+                                <option value="Entertainment">Entertainment</option>
+                                <option value="Utilities">Utilities</option>
+                                <option value="Health">Health</option>
+                                <option value="Education">Education</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+
+                        <div class="input-box">
+                            <label>Date</label>
+                            <input type="date" name="date" required>
+                        </div>
+                    </div>
+
+                    <div class="expense-tip-box">
+                        <span>✨</span>
+                        <p>Add each expense with the correct category to get better charts and financial insights.</p>
+                    </div>
+
+                    <button type="submit" class="premium-add-btn">+ Add Expense</button>
+                </form>
+            </div>
+        </section>
+
+        <section class="action-row" id="reports-section">
+            <a class="report-btn" href="{{ url_for('send_report') }}">Send Excel Report</a>
+            <a class="report-btn pdf-btn" href="{{ url_for('send_pdf_report') }}">Send PDF Report</a>
+            <a class="report-btn download-btn" href="{{ url_for('download_pdf_report') }}">Download PDF</a>
+            <a class="report-btn" href="{{ url_for('send_filtered_excel_report', search=search_query, category=selected_category, start_date=start_date, end_date=end_date, sort_by=sort_by, sort_order=sort_order) }}">Filtered Excel</a>
+            <a class="report-btn pdf-btn" href="{{ url_for('send_filtered_pdf_report', search=search_query, category=selected_category, start_date=start_date, end_date=end_date, sort_by=sort_by, sort_order=sort_order) }}">Filtered PDF</a>
+        </section>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-box">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="table-card premium-table-card">
+            <div class="table-top-banner">
+                <div>
+                    <span class="section-badge">Expense Records</span>
+                    <h3>Your Expenses</h3>
+                    <p>View, edit and manage your spending history in a clean premium table layout.</p>
+                </div>
+                <div class="table-banner-icon">📑</div>
+            </div>
+
+            <div class="table-header-row premium-table-header">
+                <div class="table-summary-chip">
+                    <span>📌</span>
+                    <strong>{{ expenses|length }}</strong>
+                    <small>records on this page</small>
+                </div>
+
+                <div class="table-summary-chip">
+                    <span>📊</span>
+                    <strong>{{ page }}</strong>
+                    <small>current page</small>
+                </div>
+            </div>
+
+            <div class="premium-table-wrapper">
+                <table class="premium-table">
+                    <thead>
+                        <tr>
+                            <th>Title</th>
+                            <th>Amount</th>
+                            <th>Category</th>
+                            <th>Date</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for expense in expenses %}
+                        <tr>
+                            <td>
+                                <div class="expense-title-cell">
+                                    <div class="expense-dot"></div>
+                                    <span>{{ expense['title'] }}</span>
+                                </div>
+                            </td>
+                            <td>
+                                <span class="amount-pill">₹ {{ '%.2f'|format(expense['amount']) }}</span>
+                            </td>
+                            <td>
+                                <span class="category-pill">{{ expense['category'] }}</span>
+                            </td>
+                            <td>{{ expense['date'] }}</td>
+                            <td class="table-actions">
+                                <a class="edit-btn" href="{{ url_for('edit_expense', expense_id=expense['id']) }}">Edit</a>
+                                <a class="delete-btn" href="{{ url_for('delete_expense', expense_id=expense['id']) }}">Delete</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+
+                        {% if not expenses %}
+                        <tr>
+                            <td colspan="5">
+                                <div class="empty-table-box">
+                                    <div class="empty-table-icon">📭</div>
+                                    <h4>No expenses found</h4>
+                                    <p>No records match your selected filters.</p>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pagination-box premium-pagination">
+                {% if page > 1 %}
+                <a class="page-btn" href="{{ url_for('dashboard', page=page-1, search=search_query, category=selected_category, start_date=start_date, end_date=end_date, sort_by=sort_by, sort_order=sort_order) }}">Previous</a>
+                {% endif %}
+
+                {% for page_num in page_numbers %}
+                    {% if page_num == page %}
+                        <span class="page-btn active-page">{{ page_num }}</span>
+                    {% else %}
+                        <a class="page-btn" href="{{ url_for('dashboard', page=page_num, search=search_query, category=selected_category, start_date=start_date, end_date=end_date, sort_by=sort_by, sort_order=sort_order) }}">{{ page_num }}</a>
+                    {% endif %}
+                {% endfor %}
+
+                {% if page < total_pages %}
+                <a class="page-btn" href="{{ url_for('dashboard', page=page+1, search=search_query, category=selected_category, start_date=start_date, end_date=end_date, sort_by=sort_by, sort_order=sort_order) }}">Next</a>
+                {% endif %}
+            </div>
+        </section>
+    </main>
+</div>
+
+<script>
+    const categoryLabels = {{ category_labels|tojson }};
+    const categoryData = {{ category_data|tojson }};
+    const monthlyLabels = {{ monthly_labels|tojson }};
+    const monthlyData = {{ monthly_data|tojson }};
+    const trendLabels = {{ trend_labels|tojson }};
+    const trendData = {{ trend_data|tojson }};
+</script>
+
+{% endblock %}
