@@ -1,122 +1,58 @@
-# SmartExpenseTracker
+# Gen-ZSplit
 
-A premium full-stack Expense Tracker web application built using **Flask, SQLite, HTML, CSS, JavaScript, and Chart.js**.  
-This project helps users manage daily expenses, set budgets, analyze spending patterns, and export reports in **PDF** and **Excel** format.
-
----
+**Split. Track. Settle.** Gen-ZSplit is a Flask expense tracker with personal budgets, reports, and shared group expenses. The MongoDB migration branch stores application data in MongoDB Atlas so it can run on Vercel's serverless runtime without relying on a persistent local SQLite file.
 
 ## Features
 
-- User Registration and Login
-- Forgot Password with OTP verification
-- Secure password hashing
-- Add, Edit, Delete Expenses
-- Budget Limit Setup
-- Budget Warning and Overflow Alerts
-- Interactive Dashboard
-- Category-wise Expense Analysis
-- Monthly Expense Graph
-- Expense Trend Graph
-- Search, Filter, Sort, and Pagination
-- Dark Mode / Light Mode
-- Responsive Premium UI
-- Export Reports in PDF and Excel
-- Filtered Report Export
-- Email Integration for Reports and Alerts
+- Account registration and login with password hashing
+- Password reset via email OTP (requires email environment variables)
+- Personal expenses: add, edit, delete, filter, search, sort and paginate
+- Monthly budgets with warning/overflow email alerts
+- Expense dashboard with category, monthly and trend charts
+- PDF and Excel reports, including filtered reports
+- Group creation and invite codes protected by a group password
+- Group members, equal/exact/percentage expense splits, balances and settlements
+- Responsive interface, theme toggle and activity history
 
----
+## Stack
 
-## Tech Stack
+- Python / Flask
+- MongoDB Atlas / PyMongo
+- Jinja templates, HTML, CSS and JavaScript
+- Pandas, OpenPyXL and ReportLab for reports
+- Vercel for serverless deployment
 
-### Frontend
-- HTML
-- CSS
-- JavaScript
-- Chart.js
+## Environment variables
 
-### Backend
-- Flask (Python)
+Create a local `.env` file from `.env.example`. Never commit real credentials.
 
-### Database
-- SQLite
+- `SECRET_KEY`: long, random Flask session secret
+- `MONGODB_URI`: Atlas connection URI for your database user
+- `MONGODB_DB_NAME`: database name (defaults to `genzsplit`)
+- `SENDER_EMAIL` and `SENDER_PASSWORD`: optional Gmail sender and app password for OTP/report/budget emails
 
-### Libraries Used
-- Flask
-- Werkzeug
-- Pandas
-- Openpyxl
-- ReportLab
+In Vercel, add the same variables under **Project → Settings → Environment Variables** for the environments you deploy, then redeploy. Do not put credentials in source code or commit them to GitHub.
 
----
+## Run locally
 
-## Project Structure
-
-```text
-SmartExpenseTracker/
-│
-├── app.py
-├── init_db.py
-├── requirements.txt
-├── README.md
-│
-├── static/
-│   ├── style.css
-│   └── script.js
-│
-└── templates/
-    ├── base.html
-    ├── login.html
-    ├── register.html
-    ├── forgot_password.html
-    ├── verify_otp.html
-    ├── reset_password.html
-    ├── dashboard.html
-    └── edit_expense.html
-
-## Gen-ZSplit Group Expense Module
-
-Groups, shared expenses, equal / exact / percentage splits and settle-up, built on the same Flask + SQLite stack.
-
-### Run it locally (VS Code)
-
-```bash
-python -m venv venv
-venv\Scripts\activate            # macOS/Linux: source venv/bin/activate
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env           # macOS/Linux: cp .env.example .env   (then set SECRET_KEY)
-
-python init_db.py                # create anything missing (safe to re-run)
-python init_db.py --reset-groups # first time only if you have the OLD group tables: rebuilds
-                                 # ONLY group tables, keeps users/expenses/budgets, writes a backup
-python init_db.py --fresh        # nuclear option: backup, then rebuild the whole database
-python init_db.py --check        # integrity report only
-
-python -m unittest discover -s tests -t .   # 47 tests
-python app.py                               # http://127.0.0.1:5000
+Copy-Item .env.example .env
+# Edit .env with your own Atlas URI and a strong SECRET_KEY
+python app.py
 ```
 
-### Layout
+Open http://127.0.0.1:5000. The `/health` endpoint checks the MongoDB connection.
 
-```text
-app.py              personal-tracker routes (unchanged) + registers the group module
-db.py               connection factory (foreign keys ON, absolute path, transactions)
-schema.sql          group tables: composite FKs, cascades, CHECKs, indexes
-init_db.py          init / --reset-groups / --fresh / --check, with automatic backups
-groupsplit/
-  money.py          parsing, formatting, split + debt-simplification maths (pure)
-  services.py       every business rule and query
-  routes.py         thin HTTP layer (CSRF, auth gate, flash + rollback handling)
-  security.py       CSRF tokens, join-attempt throttle
-  filters.py        Jinja filters (money, hue, ago, ...)
-templates/          gz_base.html shell, groups.html, group_detail.html, partials/
-static/             style.css (legacy + Gen-ZSplit design system), groups.js
-tests/              money properties, DB integrity attacks, workflows, end-to-end routes
-```
+## Vercel
 
-### Rules the module enforces
+The project uses `vercel.json` to route requests to the Flask entry point in `app.py`. Configure `MONGODB_URI`, `MONGODB_DB_NAME`, and `SECRET_KEY` in Vercel before testing registration or login.
 
-- Money is stored as integer minor units (paise/cents); every split sums exactly to the total.
-- Anyone in a group can add expenses. The expense's creator or the owner can delete it.
-  The payer, the receiver or the owner can record a payment. Only the owner can add/remove people or delete the group.
-- A member can't leave or be removed while they owe or are owed money.
-- People join with an invite code **and** the group password (5 wrong tries per 10 minutes, then a lockout).
+## Important notes
+
+- The MongoDB migration uses a fresh database; it does not import records from an old SQLite database.
+- The legacy SQLite schema/initialization files are retained for reference only and are not used by the MongoDB-backed app.
+- Email features require valid email environment variables. Core expense/group functionality does not require email to be configured.
+- Verify registration, login, personal expenses, budget changes, group creation, joining, splits and settlements in a staging deployment before merging this branch into `main`.
