@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 
 from pymongo import ASCENDING, MongoClient
 from pymongo.errors import DuplicateKeyError
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Retained only for backwards-compatible imports; no SQLite file is used.
+# Kept for the existing groupsplit package's Flask config compatibility.
 DEFAULT_DB_PATH = os.path.join(BASE_DIR, "mongodb-atlas")
 
 _client = None
@@ -17,25 +16,23 @@ _indexes_ready = False
 
 
 def get_db():
-    """Return the MongoDB database, connecting lazily for serverless cold starts."""
+    """Return the shared MongoDB database; suitable for warm Vercel functions."""
     global _client, _database, _indexes_ready
     uri = os.environ.get("MONGODB_URI", "").strip()
     if not uri:
         raise RuntimeError("MONGODB_URI is missing. Configure it in Vercel Environment Variables.")
     if _client is None:
-        _client = MongoClient(
-            uri,
-            serverSelectionTimeoutMS=8000,
-            connectTimeoutMS=8000,
-            appname="Gen-ZSplit",
-        )
+        _client = MongoClient(uri, serverSelectionTimeoutMS=8000,
+                              connectTimeoutMS=8000, appname="Gen-ZSplit")
         db_name = os.environ.get("MONGODB_DB_NAME", "").strip()
         if not db_name:
-            # Use a database name from the URI path when supplied, else a stable default.
             from urllib.parse import urlparse
             db_name = urlparse(uri).path.strip("/").split("/")[0] or "genzsplit"
         _database = _client[db_name]
     if not _indexes_ready:
+        for collection in ("users", "expenses", "budgets", "groups", "group_members",
+                           "group_expenses", "expense_splits", "settlements", "group_activity"):
+            _database[collection].create_index([("id", ASCENDING)], unique=True, sparse=True)
         _database.users.create_index([("email", ASCENDING)], unique=True)
         _database.expenses.create_index([("user_id", ASCENDING), ("date", ASCENDING)])
         _database.budgets.create_index([("user_id", ASCENDING), ("month", ASCENDING)], unique=True)
@@ -50,19 +47,17 @@ def get_db():
 
 
 def next_id(db, counter_name: str) -> int:
-    """Allocate an integer ID to keep existing Flask routes and templates compatible."""
+    """Allocate integer IDs so existing routes and templates can keep using them."""
     from pymongo import ReturnDocument
     doc = db.counters.find_one_and_update(
-        {"_id": counter_name},
-        {"$inc": {"value": 1}},
-        upsert=True,
-        return_document=ReturnDocument.AFTER,
+        {"_id": counter_name}, {"$inc": {"value": 1}},
+        upsert=True, return_document=ReturnDocument.AFTER,
     )
     return int(doc["value"])
 
 
 def close_db(_exc=None) -> None:
-    """Keep the MongoClient warm between serverless invocations; do not close it per request."""
+    """Do not close the shared client at each Flask request teardown."""
     return None
 
 
