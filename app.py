@@ -432,7 +432,7 @@ def _report(kind, filtered):
         args.get("start_date", "").strip() if filtered else "", args.get("end_date", "").strip() if filtered else "",
         args.get("search", "").strip() if filtered else "", args.get("sort_by", "date").strip(),
         args.get("sort_order", "desc").strip())
-    creator = create_pdf_file_from_expenses if kind == "pdf" else create_excel_file_from_expenses
+    creator = create_pdf_file_from_expenses if kind in {"pdf", "download"} else create_excel_file_from_expenses
     path, name = creator(expenses, session["user_name"], filtered=filtered)
     if not path:
         flash(name)
