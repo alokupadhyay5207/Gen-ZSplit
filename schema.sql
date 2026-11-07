@@ -1,104 +1,126 @@
--- =====================================================================
--- Gen-ZSplit group module schema  (SQLite >= 3.8: partial indexes + composite FKs)
+-- Gen-ZSplit schema for Supabase (PostgreSQL).
+-- Run this once in: Supabase Dashboard -> SQL Editor -> New query -> Run.
 --
--- Design rules
---   1. Money is stored as INTEGER minor units (paise / cents). Never REAL.
---      A 3-way split of 100.00 can then never drift by a floating-point hair.
---   2. Structure is cascade-owned:  groups -> members / expenses / settlements
---      / activity  and  expenses -> splits.  Deleting a group leaves nothing.
---   3. Financial history is never destroyed by accident: users referenced by
---      payments are protected by RESTRICT (default NO ACTION).
---   4. Composite foreign keys make illegal rows impossible at the DB layer:
---        * an expense can only be paid by someone who is a member of THAT group
---        * a split row can only belong to a member of the expense's own group
---        * a settlement can only move money between members of its own group
---      The Flask validation is a friendly first line; these are the backstop.
---   5. Every connection MUST run  PRAGMA foreign_keys = ON  (db.connect does).
--- =====================================================================
+-- If you already ran an older version of this file (UUID ids, "username" column),
+-- those tables have the wrong shape. Uncomment the block below to remove them first.
+-- WARNING: this deletes all data in these tables.
+--
+-- drop table if exists public.group_activity, public.settlements, public.expense_splits,
+--   public.group_expenses, public.group_members, public.groups, public.budgets,
+--   public.expenses, public.users cascade;
 
-CREATE TABLE IF NOT EXISTS groups (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 2 AND 60),
-    description   TEXT    NOT NULL DEFAULT '' CHECK (length(description) <= 280),
-    invite_code   TEXT    NOT NULL UNIQUE,
-    password_hash TEXT    NOT NULL,
-    owner_id      INTEGER NOT NULL REFERENCES users(id),
-    currency      TEXT    NOT NULL DEFAULT 'INR'
-                  CHECK (currency IN ('INR','USD','EUR','GBP','AED','JPY')),
-    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+create table public.users (
+    id          bigint generated always as identity primary key,
+    name        text not null,
+    email       text not null unique,
+    password    text not null,                 -- werkzeug password hash
+    otp         text,
+    otp_expiry  text,
+    created_at  text not null default to_char(timezone('utc', now()), 'YYYY-MM-DD HH24:MI:SS')
 );
 
-CREATE TABLE IF NOT EXISTS group_members (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id  INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    user_id   INTEGER NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
-    role      TEXT    NOT NULL DEFAULT 'member' CHECK (role   IN ('owner','member')),
-    status    TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active','removed')),
-    joined_at TEXT    NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (group_id, user_id)            -- also the parent key for composite FKs
+create table public.expenses (
+    id          bigint generated always as identity primary key,
+    user_id     bigint not null references public.users(id) on delete cascade,
+    title       text not null,
+    amount      numeric(12, 2) not null check (amount > 0),
+    category    text not null,
+    date        date not null,
+    created_at  text not null default to_char(timezone('utc', now()), 'YYYY-MM-DD HH24:MI:SS')
 );
-CREATE INDEX IF NOT EXISTS ix_members_user  ON group_members (user_id, status);
-CREATE INDEX IF NOT EXISTS ix_members_group ON group_members (group_id, status);
--- Exactly one active owner per group.
-CREATE UNIQUE INDEX IF NOT EXISTS ux_one_active_owner
-    ON group_members (group_id) WHERE role = 'owner' AND status = 'active';
+create index expenses_user_date_idx on public.expenses (user_id, date);
 
-CREATE TABLE IF NOT EXISTS group_expenses (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id     INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    paid_by      INTEGER NOT NULL,
-    title        TEXT    NOT NULL CHECK (length(trim(title)) BETWEEN 1 AND 120),
-    amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
-    category     TEXT    NOT NULL DEFAULT 'Other',
-    expense_date TEXT    NOT NULL CHECK (date(expense_date) IS NOT NULL AND date(expense_date) = expense_date),
-                              -- NULL-safe: CHECK(NULL) would PASS, and date('junk') is NULL
-    split_method TEXT    NOT NULL CHECK (split_method IN ('equal','exact','percentage')),
-    notes        TEXT    NOT NULL DEFAULT '' CHECK (length(notes) <= 500),
-    created_by   INTEGER NOT NULL REFERENCES users(id),
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-    deleted_at   TEXT,
-    deleted_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    UNIQUE (id, group_id),                -- parent key for expense_splits
-    FOREIGN KEY (group_id, paid_by) REFERENCES group_members (group_id, user_id)
+create table public.budgets (
+    id            bigint generated always as identity primary key,
+    user_id       bigint not null references public.users(id) on delete cascade,
+    month         text not null,               -- 'YYYY-MM'
+    budget_limit  numeric(12, 2) not null check (budget_limit >= 0),
+    warning_sent  integer not null default 0,
+    overflow_sent integer not null default 0,
+    unique (user_id, month)
 );
-CREATE INDEX IF NOT EXISTS ix_expenses_group
-    ON group_expenses (group_id, deleted_at, expense_date DESC, id DESC);
 
-CREATE TABLE IF NOT EXISTS expense_splits (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    expense_id  INTEGER NOT NULL,
-    group_id    INTEGER NOT NULL,
-    user_id     INTEGER NOT NULL,
-    share_minor INTEGER NOT NULL CHECK (share_minor >= 0),
-    share_bp    INTEGER CHECK (share_bp IS NULL OR share_bp BETWEEN 0 AND 10000),
-    UNIQUE (expense_id, user_id),
-    FOREIGN KEY (expense_id, group_id) REFERENCES group_expenses (id, group_id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (group_id, user_id) REFERENCES group_members (group_id, user_id)
+create table public.groups (
+    id             bigint generated always as identity primary key,
+    name           text not null,
+    description    text not null default '',
+    invite_code    text not null unique,
+    password_hash  text not null,
+    owner_id       bigint not null references public.users(id),
+    currency       text not null default 'INR',
+    created_at     text not null default to_char(timezone('utc', now()), 'YYYY-MM-DD HH24:MI:SS')
 );
-CREATE INDEX IF NOT EXISTS ix_splits_user ON expense_splits (user_id);
 
-CREATE TABLE IF NOT EXISTS settlements (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id     INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    payer_id     INTEGER NOT NULL,
-    receiver_id  INTEGER NOT NULL,
-    amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
-    created_by   INTEGER NOT NULL REFERENCES users(id),
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-    CHECK (payer_id <> receiver_id),
-    FOREIGN KEY (group_id, payer_id)    REFERENCES group_members (group_id, user_id),
-    FOREIGN KEY (group_id, receiver_id) REFERENCES group_members (group_id, user_id)
+create table public.group_members (
+    group_id   bigint not null references public.groups(id) on delete cascade,
+    user_id    bigint not null references public.users(id),
+    role       text not null default 'member' check (role in ('owner', 'member')),
+    status     text not null default 'active' check (status in ('active', 'removed')),
+    joined_at  text not null default to_char(timezone('utc', now()), 'YYYY-MM-DD HH24:MI:SS'),
+    primary key (group_id, user_id)
 );
-CREATE INDEX IF NOT EXISTS ix_settlements_group ON settlements (group_id);
+create index group_members_user_idx on public.group_members (user_id);
 
-CREATE TABLE IF NOT EXISTS group_activity (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id    INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    actor_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    kind        TEXT    NOT NULL,
-    description TEXT    NOT NULL,
-    expense_id  INTEGER REFERENCES group_expenses(id) ON DELETE SET NULL,
-    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+create table public.group_expenses (
+    id            bigint generated always as identity primary key,
+    group_id      bigint not null references public.groups(id) on delete cascade,
+    paid_by       bigint not null references public.users(id),
+    title         text not null,
+    amount_minor  bigint not null check (amount_minor > 0),
+    category      text not null default 'Other',
+    expense_date  date not null,
+    split_method  text not null check (split_method in ('equal', 'exact', 'percentage')),
+    notes         text not null default '',
+    created_by    bigint not null references public.users(id),
+    deleted_at    text,
+    deleted_by    bigint references public.users(id),
+    created_at    text not null default to_char(timezone('utc', now()), 'YYYY-MM-DD HH24:MI:SS')
 );
-CREATE INDEX IF NOT EXISTS ix_activity_group ON group_activity (group_id, id DESC);
+create index group_expenses_group_date_idx on public.group_expenses (group_id, expense_date);
+
+create table public.expense_splits (
+    id           bigint generated always as identity primary key,
+    expense_id   bigint not null references public.group_expenses(id) on delete cascade,
+    group_id     bigint not null references public.groups(id) on delete cascade,
+    user_id      bigint not null references public.users(id),
+    share_minor  bigint not null check (share_minor >= 0),
+    share_bp     integer,
+    unique (expense_id, user_id)
+);
+create index expense_splits_group_idx on public.expense_splits (group_id);
+
+create table public.settlements (
+    id            bigint generated always as identity primary key,
+    group_id      bigint not null references public.groups(id) on delete cascade,
+    payer_id      bigint not null references public.users(id),
+    receiver_id   bigint not null references public.users(id),
+    amount_minor  bigint not null check (amount_minor > 0),
+    created_by    bigint not null references public.users(id),
+    created_at    text not null default to_char(timezone('utc', now()), 'YYYY-MM-DD HH24:MI:SS'),
+    check (payer_id <> receiver_id)
+);
+create index settlements_group_idx on public.settlements (group_id);
+
+create table public.group_activity (
+    id           bigint generated always as identity primary key,
+    group_id     bigint not null references public.groups(id) on delete cascade,
+    actor_id     bigint references public.users(id),
+    kind         text not null,
+    description  text not null,
+    expense_id   bigint,
+    created_at   text not null default to_char(timezone('utc', now()), 'YYYY-MM-DD HH24:MI:SS')
+);
+create index group_activity_group_idx on public.group_activity (group_id, id);
+
+-- Security: turn on Row Level Security with no policies. The public "anon" key
+-- can then read nothing. The Flask server uses the secret / service_role key,
+-- which bypasses RLS, so the app keeps working.
+alter table public.users           enable row level security;
+alter table public.expenses        enable row level security;
+alter table public.budgets         enable row level security;
+alter table public.groups          enable row level security;
+alter table public.group_members   enable row level security;
+alter table public.group_expenses  enable row level security;
+alter table public.expense_splits  enable row level security;
+alter table public.settlements     enable row level security;
+alter table public.group_activity  enable row level security;

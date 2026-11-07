@@ -1,6 +1,5 @@
 from flask import Flask, render_template, request, redirect, session, url_for, flash, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
-from pymongo.errors import DuplicateKeyError
 import pandas as pd
 import smtplib
 from email.message import EmailMessage
@@ -16,6 +15,7 @@ load_dotenv()
 
 import db as database
 import groupsplit
+from db import DuplicateKeyError
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(32).hex()
@@ -58,31 +58,40 @@ def send_budget_alert_email(user_email, user_name, total_spent, budget_limit, al
     return send_email_simple(user_email, subject, body)
 
 
-def _as_expense(doc):
-    if not doc:
-        return None
-    return {k: v for k, v in doc.items() if k != "_id"}
+def _as_expense(row):
+    return dict(row) if row else None
+
+
+def _valid_day(value):
+    """True for a YYYY-MM-DD string. Anything else is ignored instead of failing the query."""
+    try:
+        datetime.strptime(value or "", "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
 
 
 def get_filtered_expenses(user_id, selected_category="", start_date="", end_date="",
                           search_query="", sort_by="date", sort_order="desc"):
     db = get_db_connection()
-    query = {"user_id": int(user_id)}
+    where = {"user_id": int(user_id)}
     if selected_category:
-        query["category"] = selected_category
-    if start_date:
-        query["date"] = {"$gte": start_date}
-    if end_date:
-        if "date" in query:
-            query["date"]["$lte"] = end_date
-        else:
-            query["date"] = {"$lte": end_date}
-    if search_query:
-        import re
-        query["title"] = {"$regex": re.escape(search_query), "$options": "i"}
+        where["category"] = selected_category
+
+    def narrow(query):
+        if _valid_day(start_date):
+            query = query.gte("date", start_date)
+        if _valid_day(end_date):
+            query = query.lte("date", end_date)
+        if search_query:
+            safe = search_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            query = query.ilike("title", f"%{safe}%")
+        return query
+
     sort_field = sort_by if sort_by in {"date", "amount", "title"} else "date"
-    direction = 1 if sort_order == "asc" else -1
-    rows = list(db.expenses.find(query).sort([(sort_field, direction), ("id", -1)]))
+    descending = sort_order != "asc"
+    rows = database.fetch(db, "expenses", where, order=[(sort_field, descending), ("id", True)],
+                          extra=narrow)
     return [_as_expense(row) for row in rows]
 
 
@@ -173,18 +182,22 @@ def send_attachment_email(to_email, subject, body, file_path, file_name, subtype
 def check_and_send_budget_alert(user_id, user_email, user_name):
     db = get_db_connection()
     current_month = datetime.now().strftime("%Y-%m")
-    budget = db.budgets.find_one({"user_id": int(user_id), "month": current_month})
+    budget = database.get_one(db, "budgets", {"user_id": int(user_id), "month": current_month})
     if not budget:
         return
-    rows = list(db.expenses.find({"user_id": int(user_id), "date": {"$regex": "^" + current_month}}))
+    year, month = int(current_month[:4]), int(current_month[5:7])
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    first_day, next_first_day = f"{current_month}-01", f"{next_year:04d}-{next_month:02d}-01"
+    rows = database.fetch(db, "expenses", {"user_id": int(user_id)}, columns="amount",
+                          extra=lambda q: q.gte("date", first_day).lt("date", next_first_day))
     total_spent = sum(float(row["amount"]) for row in rows)
     limit = float(budget["budget_limit"])
     if total_spent > limit and not budget.get("overflow_sent", 0):
         send_budget_alert_email(user_email, user_name, total_spent, limit, "overflow")
-        db.budgets.update_one({"_id": budget["_id"]}, {"$set": {"overflow_sent": 1}})
+        database.update(db, "budgets", {"id": budget["id"]}, {"overflow_sent": 1})
     elif total_spent >= 0.8 * limit and not budget.get("warning_sent", 0):
         send_budget_alert_email(user_email, user_name, total_spent, limit, "warning")
-        db.budgets.update_one({"_id": budget["_id"]}, {"$set": {"warning_sent": 1}})
+        database.update(db, "budgets", {"id": budget["id"]}, {"warning_sent": 1})
 
 
 @app.route("/")
@@ -203,9 +216,10 @@ def register():
             return redirect(url_for("register"))
         db = get_db_connection()
         try:
-            db.users.insert_one({"id": database.next_id(db, "users"), "name": name, "email": email,
-                                 "password": generate_password_hash(password), "otp": None, "otp_expiry": None,
-                                 "created_at": datetime.utcnow().isoformat()})
+            database.insert(db, "users", {"name": name, "email": email,
+                                          "password": generate_password_hash(password),
+                                          "otp": None, "otp_expiry": None,
+                                          "created_at": datetime.utcnow().isoformat()})
         except DuplicateKeyError:
             flash("Email already exists.")
             return redirect(url_for("register"))
@@ -219,7 +233,7 @@ def login():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-        user = get_db_connection().users.find_one({"email": email})
+        user = database.get_one(get_db_connection(), "users", {"email": email})
         if user and check_password_hash(user["password"], password):
             session.clear()
             session["user_id"] = user["id"]
@@ -236,13 +250,13 @@ def forgot_password():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         db = get_db_connection()
-        user = db.users.find_one({"email": email})
+        user = database.get_one(db, "users", {"email": email}, columns="id,email")
         if not user:
             flash("If the email is registered, a reset code will be sent.")
             return redirect(url_for("forgot_password"))
         otp = str(random.randint(100000, 999999))
         expiry = datetime.utcnow() + timedelta(minutes=10)
-        db.users.update_one({"_id": user["_id"]}, {"$set": {"otp": otp, "otp_expiry": expiry.isoformat()}})
+        database.update(db, "users", {"id": user["id"]}, {"otp": otp, "otp_expiry": expiry.isoformat()})
         send_email_simple(email, "Your OTP for Password Reset",
                           f"Your password reset OTP is {otp}. It expires in 10 minutes.")
         session["reset_email"] = email
@@ -257,7 +271,7 @@ def verify_otp():
         return redirect(url_for("forgot_password"))
     if request.method == "POST":
         db = get_db_connection()
-        user = db.users.find_one({"email": session["reset_email"]})
+        user = database.get_one(db, "users", {"email": session["reset_email"]}, columns="id,email,otp,otp_expiry")
         otp = request.form.get("otp", "").strip()
         if not user or not user.get("otp") or not user.get("otp_expiry"):
             flash("OTP not found. Please request a new one.")
@@ -288,8 +302,8 @@ def reset_password():
         if not new_password or new_password != confirm_password:
             flash("Passwords do not match.")
             return redirect(url_for("reset_password"))
-        get_db_connection().users.update_one({"email": session["reset_email"]},
-            {"$set": {"password": generate_password_hash(new_password), "otp": None, "otp_expiry": None}})
+        database.update(get_db_connection(), "users", {"email": session["reset_email"]},
+                        {"password": generate_password_hash(new_password), "otp": None, "otp_expiry": None})
         session.pop("reset_email", None)
         session.pop("otp_verified", None)
         flash("Password reset successful. Please login.")
@@ -316,9 +330,10 @@ def dashboard():
     page = min(page, total_pages)
     expenses = all_expenses[(page - 1) * per_page:page * per_page]
     db = get_db_connection()
-    categories = [{"category": c} for c in sorted(db.expenses.distinct("category", {"user_id": session["user_id"]}))]
+    category_rows = database.fetch(db, "expenses", {"user_id": session["user_id"]}, columns="category")
+    categories = [{"category": c} for c in sorted({row["category"] for row in category_rows})]
     month = datetime.now().strftime("%Y-%m")
-    budget = db.budgets.find_one({"user_id": session["user_id"], "month": month})
+    budget = database.get_one(db, "budgets", {"user_id": session["user_id"], "month": month})
     total_expense = sum(float(e["amount"]) for e in all_expenses)
     budget_limit = float(budget["budget_limit"]) if budget else 0
     remaining_budget = budget_limit - total_expense if budget_limit else 0
@@ -354,9 +369,9 @@ def set_budget():
         return redirect(url_for("dashboard"))
     db = get_db_connection()
     month = datetime.now().strftime("%Y-%m")
-    db.budgets.update_one({"user_id": session["user_id"], "month": month},
-        {"$set": {"budget_limit": budget_limit, "warning_sent": 0, "overflow_sent": 0},
-         "$setOnInsert": {"id": database.next_id(db, "budgets")}}, upsert=True)
+    database.upsert(db, "budgets", {"user_id": session["user_id"], "month": month,
+                                    "budget_limit": budget_limit, "warning_sent": 0, "overflow_sent": 0},
+                    on_conflict="user_id,month")
     flash("Monthly budget set successfully.")
     return redirect(url_for("dashboard"))
 
@@ -380,8 +395,9 @@ def add_expense():
         flash("Please fill all expense fields.")
         return redirect(url_for("dashboard"))
     db = get_db_connection()
-    db.expenses.insert_one({"id": database.next_id(db, "expenses"), "user_id": session["user_id"],
-        "title": title, "amount": amount, "category": category, "date": day, "created_at": datetime.utcnow().isoformat()})
+    database.insert(db, "expenses", {"user_id": session["user_id"], "title": title, "amount": amount,
+                                     "category": category, "date": day,
+                                     "created_at": datetime.utcnow().isoformat()})
     check_and_send_budget_alert(session["user_id"], session["user_email"], session["user_name"])
     flash("Expense added successfully.")
     return redirect(url_for("dashboard"))
@@ -392,7 +408,7 @@ def edit_expense(expense_id):
     if "user_id" not in session:
         return redirect(url_for("login"))
     db = get_db_connection()
-    expense = db.expenses.find_one({"id": expense_id, "user_id": session["user_id"]})
+    expense = database.get_one(db, "expenses", {"id": expense_id, "user_id": session["user_id"]})
     if not expense:
         flash("Expense not found.")
         return redirect(url_for("dashboard"))
@@ -408,8 +424,8 @@ def edit_expense(expense_id):
         except ValueError:
             flash("Enter valid expense details.")
             return redirect(url_for("edit_expense", expense_id=expense_id))
-        db.expenses.update_one({"_id": expense["_id"]},
-            {"$set": {"title": title, "amount": amount, "category": category, "date": day}})
+        database.update(db, "expenses", {"id": expense["id"], "user_id": session["user_id"]},
+                        {"title": title, "amount": amount, "category": category, "date": day})
         flash("Expense updated successfully.")
         return redirect(url_for("dashboard"))
     return render_template("edit_expense.html", expense=_as_expense(expense))
@@ -419,7 +435,7 @@ def edit_expense(expense_id):
 def delete_expense(expense_id):
     if "user_id" not in session:
         return redirect(url_for("login"))
-    get_db_connection().expenses.delete_one({"id": expense_id, "user_id": session["user_id"]})
+    database.delete(get_db_connection(), "expenses", {"id": expense_id, "user_id": session["user_id"]})
     flash("Expense deleted successfully.")
     return redirect(url_for("dashboard"))
 
@@ -481,10 +497,10 @@ def logout():
 @app.route("/health")
 def health():
     try:
-        get_db_connection().command("ping")
-        return {"status": "ok", "database": "mongodb"}
+        database.fetch(get_db_connection(), "users", columns="id", limit=1)
+        return {"status": "ok", "database": "supabase"}
     except Exception:
-        app.logger.exception("MongoDB health check failed")
+        app.logger.exception("Supabase health check failed")
         return {"status": "error", "database": "unavailable"}, 503
 
 
