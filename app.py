@@ -499,9 +499,10 @@ def health():
     try:
         database.fetch(get_db_connection(), "users", columns="id", limit=1)
         return {"status": "ok", "database": "supabase"}
-    except Exception:
+    except Exception as exc:
         app.logger.exception("Supabase health check failed")
-        return {"status": "error", "database": "unavailable"}, 503
+        return {"status": "error", "database": "unavailable",
+                "reason": type(exc).__name__}, 503
 
 
 if __name__ == "__main__":
