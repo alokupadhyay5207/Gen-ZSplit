@@ -1,58 +1,60 @@
-# Gen-ZSplit
+# Gen-ZSplit (Next.js)
 
-**Split. Track. Settle.** Gen-ZSplit is a Flask expense tracker with personal budgets, reports, and shared group expenses. The MongoDB migration branch stores application data in MongoDB Atlas so it can run on Vercel's serverless runtime without relying on a persistent local SQLite file.
-
-## Features
-
-- Account registration and login with password hashing
-- Password reset via email OTP (requires email environment variables)
-- Personal expenses: add, edit, delete, filter, search, sort and paginate
-- Monthly budgets with warning/overflow email alerts
-- Expense dashboard with category, monthly and trend charts
-- PDF and Excel reports, including filtered reports
-- Group creation and invite codes protected by a group password
-- Group members, equal/exact/percentage expense splits, balances and settlements
-- Responsive interface, theme toggle and activity history
+**Split. Track. Settle.** Personal expense tracking (budgets, charts, PDF/Excel reports) plus shared group
+expenses (equal / exact / percentage splits, balances, settlements). This is the Next.js 15 (App Router,
+TypeScript) port of the Flask app. **It uses the same Supabase database and schema**, so no data migration is needed.
 
 ## Stack
+Next.js 15 · React 19 · TypeScript · Supabase (`@supabase/supabase-js`, server-side only) · `jose` (signed session cookies) ·
+Chart.js · `pdf-lib` + `exceljs` (reports) · `nodemailer` (Gmail SMTP)
 
-- Python / Flask
-- MongoDB Atlas / PyMongo
-- Jinja templates, HTML, CSS and JavaScript
-- Pandas, OpenPyXL and ReportLab for reports
-- Vercel for serverless deployment
-
-## Environment variables
-
-Create a local `.env` file from `.env.example`. Never commit real credentials.
-
-- `SECRET_KEY`: long, random Flask session secret
-- `MONGODB_URI`: Atlas connection URI for your database user
-- `MONGODB_DB_NAME`: database name (defaults to `genzsplit`)
-- `SENDER_EMAIL` and `SENDER_PASSWORD`: optional Gmail sender and app password for OTP/report/budget emails
-
-In Vercel, add the same variables under **Project → Settings → Environment Variables** for the environments you deploy, then redeploy. Do not put credentials in source code or commit them to GitHub.
-
-## Run locally
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-# Edit .env with your own Atlas URI and a strong SECRET_KEY
-python app.py
+## Setup
+```bash
+npm install
+cp .env.example .env.local      # then fill it in (same SUPABASE_URL / SUPABASE_KEY as the Flask app)
+npm run check-db                # verifies the key type and that every table exists
+npm test                        # money-split property tests + Werkzeug hash compatibility (Node >= 22.6)
+npm run dev                     # http://localhost:3000   (health check: /health)
 ```
+If this is a fresh Supabase project, run `supabase/schema.sql` in the SQL editor first.
 
-Open http://127.0.0.1:5000. The `/health` endpoint checks the MongoDB connection.
+| Variable | Purpose |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_KEY` | Project URL and the **secret / service_role** key (server only; never expose it) |
+| `SECRET_KEY` | Signs session cookies. **Required in production** (`openssl rand -base64 48`) |
+| `SENDER_EMAIL`, `SENDER_PASSWORD` | Optional Gmail + app password for OTP / report / budget emails |
 
-## Vercel
+## Deploy (Vercel)
+Import the repo, set the four variables above under *Settings → Environment Variables*, deploy. Nothing else is needed;
+delete the old `vercel.json` / `app.py` / `requirements.txt` from the Flask version.
 
-The project uses `vercel.json` to route requests to the Flask entry point in `app.py`. Configure `MONGODB_URI`, `MONGODB_DB_NAME`, and `SECRET_KEY` in Vercel before testing registration or login.
+## Flask → Next.js map
+| Flask | Next.js |
+|---|---|
+| `app.py` routes (`/login`, `/dashboard`, ...) | `src/app/(legacy)/**` (same URLs) + `src/actions/{auth,personal}.ts` |
+| `groupsplit/routes.py` | `src/app/(groups)/groups/**` + `src/actions/groups.ts` |
+| `groupsplit/services.py`, `money.py` | `src/lib/groups.ts`, `src/lib/money.ts` (same rules and messages) |
+| `db.py` (Supabase helpers) | `src/lib/db.ts` |
+| Jinja templates + `static/*.js` | React components in `src/components/`; `style.css` is `src/app/globals.css` unchanged |
+| Flask `session` / `flash()` | `src/lib/session.ts` (HS256 JWT cookie) / `src/lib/flash.ts` |
+| pandas / reportlab / smtplib | `exceljs` / `pdf-lib` / `nodemailer` (all in memory, no temp files) |
+| `tests/test_money.py` | `tests/money.test.ts` (+ `tests/password.test.ts`) |
 
-## Important notes
+Two root layouts keep the original look: `(legacy)` (light/dark personal pages) and `(groups)` (the dark Gen-ZSplit shell).
 
-- The MongoDB migration uses a fresh database; it does not import records from an old SQLite database.
-- The legacy SQLite schema/initialization files are retained for reference only and are not used by the MongoDB-backed app.
-- Email features require valid email environment variables. Core expense/group functionality does not require email to be configured.
-- Verify registration, login, personal expenses, budget changes, group creation, joining, splits and settlements in a staging deployment before merging this branch into `main`.
+## Behaviour notes
+* **Passwords keep working.** Hashes are Werkzeug-compatible (scrypt/pbkdf2), so existing users and group passwords
+  verify, and hashes created here still verify in the old Flask app (rollback-safe).
+* **Everyone has to log in once after cutover**: Flask's session cookies can't be read by Next.
+* **CSRF**: the hand-rolled token is gone; Server Actions are POST-only and origin-checked by Next.
+* Mutating actions that were GET links in Flask (delete expense, e-mail report) are now POST form buttons. Only the PDF download is a GET.
+* Group dialogs submit without reloading the page; a failed "add expense" keeps every field and shows the error inside the dialog.
+* Budget alert emails are sent after the response (`after()`), so adding an expense isn't held up by SMTP.
+* **Fixed while porting:** in the Flask reset flow the `otp_verified` flag was never cleared when a new reset email was requested, so someone
+  who had verified an OTP for their own account could then reset another account's password. Starting a reset now clears it.
+
+## Known limitations carried over unchanged
+* The group-password lockout (5 failures / 10 min) is in memory per server instance, as before. On serverless each warm instance counts
+  separately, so treat it as a speed bump; use Redis/Supabase for a hard limit.
+* Password-reset OTPs are stored in plain text and have no attempt limit; `/forgot_password` reveals whether an email is registered; there's no minimum password length.
+* Month boundaries, "today" and report timestamps use UTC (the group add-expense dialog defaults to the visitor's local date).

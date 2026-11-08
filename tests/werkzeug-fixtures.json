@@ -1,0 +1,5 @@
+{
+  "password": "correct horse battery staple ü",
+  "scrypt": "scrypt:32768:8:1$zWUW9ddX0XLecOsF$9bcced789cad82724d163a806f2450cdd20d2a2549db61f284723ae2c0e45f505fd837e3ef57daab0fae4b2f9561930389c2e160d59cb0b628ba8d2e6f55df47",
+  "pbkdf2": "pbkdf2:sha256:600000$xt4ZoMfgUuh39Tgv$df3a23288f78cfd6925e346fde6ea99caead8d4d3d3714e20ab64540616cc4a1"
+}

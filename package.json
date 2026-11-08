@@ -1,0 +1,36 @@
+{
+  "name": "gen-zsplit",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Gen-ZSplit: expense tracker + group splitting (Next.js + Supabase)",
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --no-warnings --test \"tests/*.test.ts\"",
+    "check-db": "node --env-file=.env.local scripts/check-db.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "chart.js": "^4.4.0",
+    "exceljs": "^3.4.0",
+    "jose": "^5.9.0",
+    "next": "^16.4.5",
+    "nodemailer": "^10.4.0",
+    "pdf-lib": "^1.17.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.16",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.6.0"
+  }
+}

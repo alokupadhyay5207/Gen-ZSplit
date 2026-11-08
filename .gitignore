@@ -1,16 +1,15 @@
+# dependencies
+node_modules/
+# next.js
+.next/
+out/
+next-env.d.ts.bak
+# env (keep the example)
 .env
 .env.*
 !.env.example
-venv/
-.venv/
-__pycache__/
-*.py[cod]
-*.db
-*.db-*
-*.sqlite
-*.sqlite3
-.dist/
-
-*.db.bak-*
-.gitignore.backup
-project_structure.txt
+# misc
+.DS_Store
+*.tsbuildinfo
+npm-debug.log*
+.vercel
